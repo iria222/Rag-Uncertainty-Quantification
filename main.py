@@ -41,13 +41,16 @@ def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retriev
     debug_print(f"Applying reranking to the {len(relevant_chunks)} retrieved chunks.")
     reranked_chunks = rerank_chunks(query, relevant_chunks, top_k=top_k_reranked)
     
-    generated_response = generate_answer(query, reranked_chunks)
+    generated_response, load_time, generation_time, reliability = generate_answer(query, reranked_chunks)
     
     # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
     reliability_signals = {
         "entropy": None,
         "confidence_score": None,
-        "decision": "pending"       # 'answer', 'abstain', or 'escalate'
+        "decision": "abstain" if "[ABSTENCION]" in generated_response else "answer" ,      # 'answer', 'abstain', or 'escalate'
+        "reliability": reliability,
+        "model_load_time_sec": round(load_time, 2),
+        "generation_time_sec": round(generation_time, 2)
     }
     
     return reranked_chunks, generated_response, reliability_signals
@@ -90,7 +93,7 @@ def batch_pipeline(args, chunks, vector_index):
         
     for query in queries_to_process:
         query_id = query.get("id", "unknown_id")
-        question = query.get("query")
+        question = query.get("question")
         if not question:
             debug_print(f"Empty query with ID: {query_id}. Omitted.")
             continue
@@ -100,7 +103,7 @@ def batch_pipeline(args, chunks, vector_index):
         results_export.append({
                 "id": query_id,
                 "category": query.get("category"),
-                "query": question,
+                "question": question,
                 "ground_truth": query.get("ground_truth"),
                 "answerable": query.get("answerable"),
                 "retrieved_chunks": retrieved_chunks,

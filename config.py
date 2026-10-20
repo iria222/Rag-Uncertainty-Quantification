@@ -9,6 +9,8 @@ import torch
 
 DEBUG_MODE = True
 
+LOAD_ON_DEMAND = True
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CACHE_VERSION = 1

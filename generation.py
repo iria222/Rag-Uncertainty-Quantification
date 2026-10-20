@@ -1,9 +1,10 @@
 from citations import format_context_label, extract_numeric_inline_labels, parse_reference_section, is_citation_free_abstention
-from config import DEVICE, GEN_MODEL_NAME, QUANTIZATION
+from config import DEVICE, GEN_MODEL_NAME, QUANTIZATION, LOAD_ON_DEMAND
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
 from utils import free_model, debug_print
 import torch
 import time
+import re
 
 SYSTEM_PROMPT = (
     "Eres un asistente de investigación académico riguroso."
@@ -14,8 +15,11 @@ SYSTEM_PROMPT = (
     "3. Cita las afirmaciones utilizando exclusivamente números entre corchetes que se correspondan con el índice del fragmento utilizado (ej: [1], [2]).\n"
     "4. Al final de tu respuesta, debes incluir obligatoriamente una sección titulada 'Referencias:' donde mapees cada número utilizado con su fuente exacta en el formato:"
     "'[1] Archivo: nombre_archivo.pdf, Pág. X'.\n"
-    "5. Si la respuesta no se encuentra o no se puede deducir con certeza del contexto, debes abstenerte respondiendo exactamente con el siguiente texto: "
+    "La única excepción a esta regla será cuando te abstengas de responder, en cuyo caso no deberás incluir la sección 'Referencias'./"
+    "5. Si la respuesta no se encuentra o no se puede deducir con certeza del contexto, debes abstenerte respondiendo exactamente con el siguiente texto,"
+    "sin añadir ninguna sección de 'Referencias:' ni texto adicional: "
     "'[ABSTENCION] No dispongo de suficiente información en el corpus para responder."
+    "6. Incluye una indicación de lo seguro que estás de la respuesta proporcionada en una sección titulada 'Fiabilidad:'. Limítate estrictamente a una de estas tres opciones: 'Baja', 'Media', 'Alta'"
 )
 
 USER_PROMPT_TEMPLATE = """CONTEXTO:
@@ -26,6 +30,18 @@ PREGUNTA:
 
 RESPUESTA:
 """
+
+_global_model = None
+_global_processor = None
+
+def parse_model_reliability(answer_text: str) -> str:
+  """Extracts the reliability level of the generated answer
+
+  """
+  match = re.search(r"Fiabilidad:\s*(Baja|Media|Alta)", answer_text, re.IGNORECASE)
+  if match:
+    return match.group(1).capitalize()
+  return "No especificada"
 
 def build_context_for_prompt(reranked_chunks: list[dict]) -> str:
     context_blocks = []
@@ -79,10 +95,22 @@ def load_generation_model(quantization: str = QUANTIZATION):
 
     return model, processor
     
-def generate_answer(query: str, reranked_chunks: list[dict]) -> str:
-    if not reranked_chunks:
-        return "[ABSTENCION] No dispongo de suficiente información para responder."
+def generate_answer(query: str, reranked_chunks: list[dict]) -> tuple[str,float,float,str]:
+    """Generates an answer for a specific question
+
+    Args:
+        query (str): input question to answer
+        reranked_chunks (list[dict]): retrieved chunks
+
+    Returns:
+        tuple[str,float,float,str]: processed question, model's load time in seconds, generation time in seconds, reliability
+    """
     
+    load_time = 0.0
+    generation_time = 0.0
+    if not reranked_chunks:
+        reliability = "Alta"
+        return ("[ABSTENCION] No dispongo de suficiente información para responder.", load_time, generation_time, reliability)  
     context = build_context_for_prompt(reranked_chunks)
     user_prompt = USER_PROMPT_TEMPLATE.format(context=context, query=query)
     
@@ -91,11 +119,8 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> str:
         {"role": "user", "content": user_prompt}
     ]
     
-    load_start = time.perf_counter()
-    model, processor = load_generation_model()
-    load_end = time.perf_counter()
+    load_time, model, processor = get_model_and_processor()
     
-    debug_print(f"Model loaded int {load_end - load_start:.2f} seconds.\n")
     
     if hasattr(processor, "apply_chat_template"):
         prompt_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -116,14 +141,57 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> str:
         )
         
     end_time = time.perf_counter()
-    elapsed_time = end_time - start_time
-    debug_print(f"Generation completed in {elapsed_time:.2f} seconds.")
+    generation_time = end_time - start_time
+    debug_print(f"Generation completed in {generation_time:.2f} seconds.")
         
     input_len = inputs["input_ids"].shape[1]
     generated_tokens = outputs[0][input_len:]
-    answer = processor.decode(generated_tokens, skip_special_tokens=True).strip()
+    raw_answer = processor.decode(generated_tokens, skip_special_tokens=True).strip()
+    answer, reliability_level = postprocess_answer(raw_answer)
     
-    debug_print("Freeing memory used by the generation model...")
-    free_model(model)
+    if LOAD_ON_DEMAND:
+        debug_print("Freeing memory used by the generation model...")
+        free_model(model)
     
-    return answer
+    return answer, load_time, generation_time, reliability_level
+
+
+def get_model_and_processor():
+    global _global_model
+    global _global_processor
+    
+    load_time = 0.0
+    
+    if LOAD_ON_DEMAND or _global_model is None:
+        load_start = time.perf_counter()
+        model, processor = load_generation_model()
+        load_end = time.perf_counter()
+    
+        load_time = load_end - load_start
+        debug_print(f"Model loaded in {load_time:.2f} seconds.\n")
+        
+        if not LOAD_ON_DEMAND:
+            _global_model, _global_processor = model, processor
+    else:
+        model, processor = _global_model, _global_processor
+    return load_time,model,processor
+
+def postprocess_answer(raw_answer:str) -> tuple[str,str]:
+    """Cleans answer
+
+    Args:
+        raw_answer (str): answer generated by the llm
+
+    Returns:
+        tuple[str,str]: cleaned answer and reliability level
+    """
+    
+    reliability_level = parse_model_reliability(raw_answer)
+    
+    if "[ABSTENCION]" in raw_answer:
+        cleaned_answer = (
+            "[ABSTENCION] No dispongo de suficiente información en el corpus para responder\n"
+            f"Fiabilidad: {reliability_level}"
+        )
+        return cleaned_answer, reliability_level
+    return raw_answer, reliability_level
