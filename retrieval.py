@@ -10,6 +10,43 @@ from utils import free_model, debug_print
 _global_embedding_model = None
 _global_reranking_model = None
 
+def load_embedding_model():
+    """Loads the embedding model in memory if its not loaded
+    """
+    global _global_embedding_model
+    if _global_embedding_model is None:
+        debug_print(f"Loading embedding model in {DEVICE.upper()}")
+        _global_embedding_model = SentenceTransformer(EMB_MODEL_NAME, device=DEVICE)
+    else:
+        debug_print("Using resident embedding model from memory")
+    return _global_embedding_model
+
+def load_reranking_model():
+    """Loads the reranking model in memory if its not loaded
+    """
+    global _global_reranking_model
+    if _global_reranking_model is None:
+        debug_print(f"Loading reranking model in {DEVICE.upper()}")
+        _global_reranking_model = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
+    else:
+        debug_print("Using resident reranking model from memory")
+    return _global_reranking_model
+
+def free_retrieval_models():
+    """Free embedding and reranking models from memory
+    """
+    global _global_reranking_model, _global_embedding_model
+    
+    if _global_embedding_model is not None:
+        debug_print("Freeing embedding model from memory...")
+        free_model(_global_embedding_model)
+        _global_embedding_model = None
+    
+    if _global_reranking_model is not None:
+        debug_print("Freeing reranking model from memory...")
+        free_model(_global_reranking_model)
+        _global_reranking_model = None
+
 def get_faiss_index(cache_key : str, chunks : list[dict], cached_vector_index : faiss.Index) -> faiss.Index:
     """Creates a FAISS index for the given chunks using the specified embedding model. 
     If a cached index is provided, it will be used instead of creating a new one.
@@ -26,19 +63,7 @@ def get_faiss_index(cache_key : str, chunks : list[dict], cached_vector_index : 
         debug_print("Using cached FAISS index for the chunks")
         return cached_vector_index
     
-    global _global_embedding_model
-    
-    if LOAD_ON_DEMAND:
-        debug_print(f"Loading embedding model for FAISS index creation in {DEVICE.upper()}.")
-        
-        embedding_model = SentenceTransformer(EMB_MODEL_NAME, device=DEVICE)
-    else:
-        if _global_embedding_model is None:
-            debug_print(f"Loading embedding model for FAISS index creation in {DEVICE.upper()}.")
-            _global_embedding_model = SentenceTransformer(EMB_MODEL_NAME, device=DEVICE)
-        else:
-            debug_print("Using resident embedding model from memory for FAISS index creation")
-        embedding_model = _global_embedding_model
+    embedding_model = load_embedding_model()
     
     debug_print("Creating new FAISS index for the chunks.")
 
@@ -54,10 +79,6 @@ def get_faiss_index(cache_key : str, chunks : list[dict], cached_vector_index : 
     save_rag_cache(cache_key, chunks, vector_index)
 
     debug_print("FAISS index created.")
-    
-    if LOAD_ON_DEMAND:
-        debug_print("Freeing up memory used by the embedding model.")
-        free_model(embedding_model)
     
     return vector_index
 
@@ -79,28 +100,13 @@ def retrieve_relevant_chunks(query: str, vector_index: faiss.Index, chunks: list
     
     k = min(max(top_k,1), vector_index.ntotal)
     
-    global _global_embedding_model
-    
-    if LOAD_ON_DEMAND:
-        debug_print(f"Loading embedding model for query encoding in {DEVICE.upper()}.")
-        embedding_model = SentenceTransformer(EMB_MODEL_NAME, device=DEVICE)
-    else:
-        if _global_embedding_model is None:
-            debug_print(f"Loading embedding model for query encoding in {DEVICE.upper()}.")
-            _global_embedding_model = SentenceTransformer(EMB_MODEL_NAME, device=DEVICE)
-        else:
-            debug_print("Using resident embedding model from memory for query encoding")
-        embedding_model = _global_embedding_model
+    embedding_model = load_embedding_model()
             
     query_vector = embedding_model.encode(
         [query], 
         normalize_embeddings=True, 
         show_progress_bar=True
     ).astype(np.float32)
-    
-    if LOAD_ON_DEMAND:
-        debug_print("Freeing up memory used by the embedding model after query encoding.")
-        free_model(embedding_model)
     
     scores, positions = vector_index.search(query_vector, k)
     relevant_chunks = [ 
@@ -129,18 +135,7 @@ def rerank_chunks(query: str, relevant_chunks: list[dict], top_k: int = 5) -> li
     
     pairs = [(query, chunk['text']) for chunk in relevant_chunks]
     
-    global _global_reranking_model
-    
-    if LOAD_ON_DEMAND:
-        debug_print(f"Loading reranking model in {DEVICE.upper()}.")
-        rerank_model = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
-    else:
-        if _global_reranking_model is None:
-            debug_print(f"Loading reranking model in {DEVICE.upper()}.")
-            _global_reranking_model = CrossEncoder(RERANK_MODEL_NAME, device=DEVICE)
-        else:
-            debug_print("Using resident reranking model from memory")
-        rerank_model = _global_reranking_model
+    rerank_model = load_reranking_model()
             
     
     rerank_scores = rerank_model.predict(pairs, show_progress_bar=True)
@@ -150,9 +145,6 @@ def rerank_chunks(query: str, relevant_chunks: list[dict], top_k: int = 5) -> li
     ]
     scored.sort(key=lambda x: x["rerank_score"], reverse=True)
     top_reranked = scored[:top_k]
-    
-    if LOAD_ON_DEMAND:
-        debug_print("Freeing up memory used by the reranking model.")
-        free_model(rerank_model)
+
     
     return top_reranked

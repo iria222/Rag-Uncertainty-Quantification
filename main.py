@@ -2,11 +2,12 @@
 
 import json
 import argparse
+import os
 
 from corpus import prepare_corpus
 
-from retrieval import get_faiss_index, rerank_chunks, retrieve_relevant_chunks
-from generation import generate_answer
+from retrieval import get_faiss_index, rerank_chunks, retrieve_relevant_chunks, free_retrieval_models
+from generation import generate_answer, free_generation_model
 from utils import debug_print
 
 def parse_arguments():
@@ -41,17 +42,11 @@ def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retriev
     debug_print(f"Applying reranking to the {len(relevant_chunks)} retrieved chunks.")
     reranked_chunks = rerank_chunks(query, relevant_chunks, top_k=top_k_reranked)
     
+    free_retrieval_models()
+    
     generated_response, load_time, generation_time, reliability = generate_answer(query, reranked_chunks)
     
-    # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
-    reliability_signals = {
-        "entropy": None,
-        "confidence_score": None,
-        "decision": "abstain" if "[ABSTENCION]" in generated_response else "answer" ,      # 'answer', 'abstain', or 'escalate'
-        "reliability": reliability,
-        "model_load_time_sec": round(load_time, 2),
-        "generation_time_sec": round(generation_time, 2)
-    }
+    reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, reliability)
     
     return reranked_chunks, generated_response, reliability_signals
     
@@ -68,10 +63,24 @@ def main():
 
     # Preparing the FAISS index
     vector_index = get_faiss_index(cache_key, chunks, cached_vector_index)
-    
-    queries_to_process = []
-    
+        
     if args.input_json:
+        if not os.path.exists(args.input_json):
+            print(f"Input file doesn't exist: {args.input_json}")
+            return 1
+        output_dir = os.path.dirname(os.path.abspath(args.output))
+        if output_dir:
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                
+                # Check writing permissions
+                if not os.access(output_dir, os.W_OK):
+                    print(f"Error: No write permissions for output directory: {output_dir}")
+                    return 1
+            except Exception as e:
+                print(f"Error setting up output directory: {e}")
+                return 1
+                
         return batch_pipeline(args, chunks, vector_index)
     
     else:
@@ -88,8 +97,9 @@ def batch_pipeline(args, chunks, vector_index):
     except Exception as e:
         debug_print(f"Error loading the JSON file: {e}")
         return
-    results_export = []
-    debug_print(f"Starting the processing of {len(queries_to_process)} queries...")
+    
+    debug_print(f"--- Executing retrieval and reranking for {len(queries_to_process)} queries ---")
+    prepared_batch = []
         
     for query in queries_to_process:
         query_id = query.get("id", "unknown_id")
@@ -98,27 +108,61 @@ def batch_pipeline(args, chunks, vector_index):
             debug_print(f"Empty query with ID: {query_id}. Omitted.")
             continue
             
-        debug_print(f"--- Processing query with ID: {query_id} ---")
-        retrieved_chunks, generated_response, reliability_signals = run_rag_pipeline(question, vector_index, chunks)
+        debug_print(f"--- Processing retrieval for query with ID: {query_id} ---")
+        relevant_chunks = retrieve_relevant_chunks(question, vector_index, chunks)
+        reranked_chunks = rerank_chunks(question, relevant_chunks)
+        prepared_batch.append({
+            "query": query,
+            "reranked_chunks": reranked_chunks
+        })
+        
+    free_retrieval_models()
+    debug_print(f"--- Starting answer generation for {len(prepared_batch)} queries ---")
+    results_export = []
+    
+    for item in prepared_batch:
+        query = item["query"]
+        reranked_chunks = item["reranked_chunks"]
+        
+        query_id = query.get("id", "unknown_id")
+        question = query.get("question")
+        
+        debug_print(f"Generating answer for query with ID: {query_id}")
+        generated_response, load_time, generation_time = generate_answer(question, reranked_chunks)
+        
+        reliability_signals = build_reliability_signals(generated_response, load_time, generation_time)
+        
         results_export.append({
-                "id": query_id,
-                "category": query.get("category"),
-                "question": question,
-                "ground_truth": query.get("ground_truth"),
-                "answerable": query.get("answerable"),
-                "retrieved_chunks": retrieved_chunks,
-                "generated_response": generated_response,
-                "reliability_signals": reliability_signals
-            })
+            "id": query_id,
+            "category": query.get("category"),
+            "question": question,
+            "ground_truth": query.get("ground_truth"),
+            "answerable": query.get("answerable"),
+            "retrieved_chunks": reranked_chunks,
+            "generated_response": generated_response,
+            "reliability_signals": reliability_signals
+        })
             
     if results_export:
         debug_print(f"Saving results in {args.output}...")
         try:
             with open(args.output, "w", encoding="utf-8") as f:
                 json.dump(results_export, f, ensure_ascii=False, indent=4)
-            debug_print("Saved results.")
+            debug_print("Saved results successfully.")
         except Exception as e:
             debug_print(f"Error when saving the results: {e}")
+    free_generation_model()
+
+def build_reliability_signals(generated_response, load_time, generation_time):
+    # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
+    reliability_signals = {
+            "entropy": None,
+            "confidence_score": None,
+            "decision": "abstain" if "[ABSTENCION]" in generated_response else "answer" ,      # 'answer', 'abstain', or 'escalate'
+            "model_load_time_sec": round(load_time, 2),
+            "generation_time_sec": round(generation_time, 2)
+        }
+    return reliability_signals
 
 def interactive_pipeline(chunks, vector_index):
     print(f"\n{'='*60}")
@@ -141,7 +185,8 @@ def interactive_pipeline(chunks, vector_index):
             print("Por favor, introduce una pregunta válida.")
             continue
             
-        retrieved_chunks, generated_response, reliability_signals = run_rag_pipeline(user_input, vector_index, chunks)
+        retrieved_chunks, generated_response, _ = run_rag_pipeline(user_input, vector_index, chunks)
+        free_generation_model()
             
         print(f"\n{'='*60}")
         print("RESULTADO DE LA CONSULTA:")

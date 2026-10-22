@@ -16,6 +16,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 CACHE_VERSION = 1
 CHUNK_SIZE = 200
 CHUNK_OVERLAP = 20
+
 EMB_MODEL_NAME = 'google/embeddinggemma-300m'
 RERANK_MODEL_NAME = 'BAAI/bge-reranker-v2-m3'
 GEN_MODEL_NAME = 'google/gemma-4-E2B-it'
