@@ -44,9 +44,9 @@ def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retriev
     
     free_retrieval_models()
     
-    generated_response, load_time, generation_time, reliability = generate_answer(query, reranked_chunks)
+    generated_response, load_time, generation_time, prob_true = generate_answer(query, reranked_chunks)
     
-    reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, reliability)
+    reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, prob_true)
     
     return reranked_chunks, generated_response, reliability_signals
     
@@ -128,9 +128,9 @@ def batch_pipeline(args, chunks, vector_index):
         question = query.get("question")
         
         debug_print(f"Generating answer for query with ID: {query_id}")
-        generated_response, load_time, generation_time = generate_answer(question, reranked_chunks)
+        generated_response, load_time, generation_time, prob_true = generate_answer(question, reranked_chunks)
         
-        reliability_signals = build_reliability_signals(generated_response, load_time, generation_time)
+        reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, prob_true)
         
         results_export.append({
             "id": query_id,
@@ -153,11 +153,11 @@ def batch_pipeline(args, chunks, vector_index):
             debug_print(f"Error when saving the results: {e}")
     free_generation_model()
 
-def build_reliability_signals(generated_response, load_time, generation_time):
+def build_reliability_signals(generated_response, load_time, generation_time, prob_true):
     # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
     reliability_signals = {
             "entropy": None,
-            "confidence_score": None,
+            "confidence_score": round(prob_true, 4) if prob_true is not None else None,
             "decision": "abstain" if "[ABSTENCION]" in generated_response else "answer" ,      # 'answer', 'abstain', or 'escalate'
             "model_load_time_sec": round(load_time, 2),
             "generation_time_sec": round(generation_time, 2)

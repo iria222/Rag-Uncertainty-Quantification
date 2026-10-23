@@ -1,10 +1,11 @@
-from citations import format_context_label, extract_numeric_inline_labels, parse_reference_section, is_citation_free_abstention
-from config import DEVICE, GEN_MODEL_NAME, QUANTIZATION, LOAD_ON_DEMAND
+from citations import format_context_label
+from config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVALUATION
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
 from utils import free_model, debug_print
+from self_evaluation import evaluate_answer_by_prompt
 import torch
 import time
-import re
+
 
 SYSTEM_PROMPT = (
     "Eres un asistente de investigación académico riguroso."
@@ -32,6 +33,8 @@ RESPUESTA:
 
 _global_model = None
 _global_processor = None
+
+_ABSTENTION_MESSAGE = "[ABSTENCION] No dispongo de suficiente información en el corpus para responder.\n"
 
 
 def build_context_for_prompt(reranked_chunks: list[dict]) -> str:
@@ -100,7 +103,7 @@ def free_generation_model():
         del _global_processor
         _global_processor = None
     
-def generate_answer(query: str, reranked_chunks: list[dict]) -> tuple[str,float,float]:
+def generate_answer(query: str, reranked_chunks: list[dict]) -> tuple[str,float,float, float]:
     """Generates an answer for a specific question
 
     Args:
@@ -108,14 +111,15 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> tuple[str,float,
         reranked_chunks (list[dict]): retrieved chunks
 
     Returns:
-        tuple[str,float,float,str]: processed question, model's load time in seconds, generation time in seconds
+        tuple[str,float,float,str]: processed question, model's load time in seconds, generation time in seconds, logit probabilities
     """
     
     load_time = 0.0
     generation_time = 0.0
+    prob_true = None
+    
     if not reranked_chunks:
-        reliability = "Alta"
-        return ("[ABSTENCION] No dispongo de suficiente información para responder.", load_time, generation_time, reliability)  
+        return (_ABSTENTION_MESSAGE, load_time, generation_time, prob_true)  
     context = build_context_for_prompt(reranked_chunks)
     user_prompt = USER_PROMPT_TEMPLATE.format(context=context, query=query)
     
@@ -152,9 +156,19 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> tuple[str,float,
     input_len = inputs["input_ids"].shape[1]
     generated_tokens = outputs[0][input_len:]
     raw_answer = processor.decode(generated_tokens, skip_special_tokens=True).strip()
+    
+    # Self evaluation by prompting
+    if APPLY_SELF_EVALUATION and "[ABSTENCION]" not in raw_answer:
+        context_str = build_context_for_prompt(reranked_chunks)
+        prob_true, must_abstain = evaluate_answer_by_prompt(query, context_str, raw_answer, model, processor)
+        debug_print(f"[Experimento Self-Evaluation] P(True) estimado: {prob_true: .4f}")
+        
+        if must_abstain:
+            raw_answer = _ABSTENTION_MESSAGE
+            
     answer = postprocess_answer(raw_answer)
     
-    return answer, load_time, generation_time
+    return answer, load_time, generation_time, prob_true
 
 
 def get_model_and_processor():
@@ -192,9 +206,6 @@ def postprocess_answer(raw_answer:str) -> str:
     """
     
     if "[ABSTENCION]" in raw_answer:
-        cleaned_answer = (
-            "[ABSTENCION] No dispongo de suficiente información en el corpus para responder\n"
-            
-        )
+        cleaned_answer = _ABSTENTION_MESSAGE
         return cleaned_answer
     return raw_answer
