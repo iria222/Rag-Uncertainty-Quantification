@@ -12,6 +12,7 @@ LOAD_ON_DEMAND = True
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+CHECKPOINT_SAVE_FREQUENCY = 10
 
 #################################
 # CHUNKING CONFIGURATION

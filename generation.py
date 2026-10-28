@@ -5,6 +5,7 @@ from utils import free_model, debug_print
 from self_evaluation import evaluate_answer_by_prompt
 import torch
 import time
+import re
 
 
 SYSTEM_PROMPT = (
@@ -208,4 +209,20 @@ def postprocess_answer(raw_answer:str) -> str:
     if "[ABSTENCION]" in raw_answer:
         cleaned_answer = _ABSTENTION_MESSAGE
         return cleaned_answer
+    
+    abstention_patterns = [
+        r"el contexto proporcionado no contiene",
+        r"no se proporciona informaci[oó]n",
+        r"no se encuentra informaci[oó]n",
+        r"no se menciona en el contexto",
+        r"no se menciona en el corpus",
+        r"no hay informaci[oó]n disponible en el contexto",
+        r"no se encuentra en el contexto",
+        r"el contexto no aporta",
+    ]
+    
+    for pattern in abstention_patterns:
+        if re.search(pattern,raw_answer.lower()):
+            return _ABSTENTION_MESSAGE
+        
     return raw_answer

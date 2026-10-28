@@ -9,6 +9,8 @@ from corpus import prepare_corpus
 from retrieval import get_faiss_index, rerank_chunks, retrieve_relevant_chunks, free_retrieval_models
 from generation import generate_answer, free_generation_model
 from utils import debug_print
+from checkpoint import load_checkpoint, get_processed_ids, save_checkpoint
+from config import CHECKPOINT_SAVE_FREQUENCY
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="RAG Pipeline")
@@ -93,41 +95,75 @@ def batch_pipeline(args, chunks, vector_index):
     try:
         with open(args.input_json, "r", encoding="utf-8") as f:
             queries_to_process = json.load(f)
-        debug_print(f"Loaded {len(queries_to_process)} queries from the JSON file")
+            total_queries = len(queries_to_process)
+        debug_print(f"Loaded {total_queries} queries from the JSON file")
     except Exception as e:
         debug_print(f"Error loading the JSON file: {e}")
         return
     
-    debug_print(f"--- Executing retrieval and reranking for {len(queries_to_process)} queries ---")
-    prepared_batch = []
-        
-    for query in queries_to_process:
-        query_id = query.get("id", "unknown_id")
-        question = query.get("question")
-        if not question:
-            debug_print(f"Empty query with ID: {query_id}. Omitted.")
-            continue
-            
-        debug_print(f"--- Processing retrieval for query with ID: {query_id} ---")
-        relevant_chunks = retrieve_relevant_chunks(question, vector_index, chunks)
-        reranked_chunks = rerank_chunks(question, relevant_chunks)
-        prepared_batch.append({
-            "query": query,
-            "reranked_chunks": reranked_chunks
-        })
-        
-    free_retrieval_models()
-    debug_print(f"--- Starting answer generation for {len(prepared_batch)} queries ---")
-    results_export = []
+    input_filename = os.path.basename(args.input_json)
+    input_stem = os.path.splitext(input_filename)[0]
     
-    for item in prepared_batch:
+    user_output_filename = os.path.basename(args.output)
+    if not user_output_filename:
+        user_output_filename = "results.json"
+        
+    output_path = os.path.join("output", input_stem, user_output_filename)
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+            
+    
+    retrieval_cache_path = os.path.join(output_dir, "retrieval_cache.json")
+        
+    debug_print(f"Output results will be saved to: {output_path}")
+    
+    args.output = output_path
+    # Load previous state through checkpoint
+    results_export = load_checkpoint(output_path)
+    processed_ids = get_processed_ids(results_export)
+    
+    if processed_ids:
+        debug_print(f"Checkpoint found: {len(processed_ids)} queries already processed. Resuming...")
+        
+    queries_pending = [
+        q for q in queries_to_process
+        if q.get("id", "unknown_id") not in processed_ids
+    ]
+    
+    total_pending = len(queries_pending)
+    
+    if total_pending == 0:
+        debug_print("All queries were already processed")
+        return
+    
+    retrieval_cache = run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pending, total_pending)
+    
+    run_generation_phase(args, results_export, queries_pending, retrieval_cache)
+    
+    debug_print(f"Process ended successfully. All results saved in {output_path}.")
+
+def run_generation_phase(args, results_export, queries_pending, retrieval_cache):
+    retrieved_map = {item["query"]["id"]: item for item in retrieval_cache if "query" in item and "id" in item["query"]}
+    prepared_batch = [
+        retrieved_map[q.get("id", "unknown_id")]
+        for q in queries_pending
+        if q.get("id", "unknown_id") in retrieved_map
+    ]
+    
+    total_prepared = len(prepared_batch)
+    debug_print(f"--- Starting answer generation for {total_prepared} queries ---")
+        
+    changes_saved = True
+    
+    for idx, item in enumerate(prepared_batch, 1):
         query = item["query"]
         reranked_chunks = item["reranked_chunks"]
         
         query_id = query.get("id", "unknown_id")
         question = query.get("question")
         
-        debug_print(f"Generating answer for query with ID: {query_id}")
+        debug_print(f"[{idx}/{total_prepared}] Generating answer for query with ID: {query_id}")
         generated_response, load_time, generation_time, prob_true = generate_answer(question, reranked_chunks)
         
         reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, prob_true)
@@ -142,16 +178,70 @@ def batch_pipeline(args, chunks, vector_index):
             "generated_response": generated_response,
             "reliability_signals": reliability_signals
         })
+        
+        changes_saved = False
+        # Save checkpoint
+        if idx % CHECKPOINT_SAVE_FREQUENCY == 0:
+            save_checkpoint(args.output, results_export)
+            changes_saved = True
+            debug_print(f"[CHECKPOINT] Checkpoint updated in disk (Progress: {idx}/{total_prepared})")
+        
             
-    if results_export:
-        debug_print(f"Saving results in {args.output}...")
-        try:
-            with open(args.output, "w", encoding="utf-8") as f:
-                json.dump(results_export, f, ensure_ascii=False, indent=4)
-            debug_print("Saved results successfully.")
-        except Exception as e:
-            debug_print(f"Error when saving the results: {e}")
+    if not changes_saved:
+        save_checkpoint(args.output, results_export)
+        debug_print("[CHECKPOINT] Final checkpoint saved in disk\n")
     free_generation_model()
+
+def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pending, total_pending):
+    retrieval_cache = load_checkpoint(retrieval_cache_path)
+    retrieved_ids = {item["query"]["id"] for item in retrieval_cache if "query" in item and "id" in item["query"]}
+    if retrieved_ids:
+        debug_print(f"[CHEKPOINT] Checkpoint found (Retrieval): {len(retrieved_ids)} queries already retrieved")
+    
+    queries_needing_retrieval = [
+        q for q in queries_pending
+        if q.get("id", "unknown_id") not in retrieved_ids
+    ]
+    
+    total_to_retrieved = len(queries_needing_retrieval)
+    
+    changes_saved = False
+    if total_to_retrieved > 0:
+        debug_print(f"--- Executing retrieval and reranking for {total_pending} queries ---")
+            
+        for idx, query in enumerate(queries_needing_retrieval,1):
+            query_id = query.get("id", "unknown_id")
+            question = query.get("question")
+            if not question:
+                debug_print(f"[{idx}/{total_to_retrieved}]Empty query with ID: {query_id}. Omitted.")
+                continue
+                
+            debug_print(f"--- [{idx}/{total_to_retrieved}] Processing retrieval for query with ID: {query_id} ---")
+            relevant_chunks = retrieve_relevant_chunks(question, vector_index, chunks)
+            reranked_chunks = rerank_chunks(question, relevant_chunks)
+            
+            retrieval_cache.append({
+                "query": query,
+                "reranked_chunks": reranked_chunks
+            })
+            
+            changes_saved = False
+            
+            if idx % CHECKPOINT_SAVE_FREQUENCY == 0:
+                save_checkpoint(retrieval_cache_path, retrieval_cache)
+                changes_saved = True
+                debug_print(f"[CHECKPOINT] Retrieval checkpoint updated in disk (Progress: {idx}/{total_to_retrieved})")
+                
+        
+        if not changes_saved:
+            save_checkpoint(retrieval_cache_path, retrieval_cache)
+            debug_print(f"[CHECKPOINT] Final retrieval checkpoint updated in disk (Progress: {idx}/{total_to_retrieved})")
+            
+    else:
+        debug_print("All pending queries already have their retrieval cached. Skipping retrieval phase...")
+        
+    free_retrieval_models()
+    return retrieval_cache
 
 def build_reliability_signals(generated_response, load_time, generation_time, prob_true):
     # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
