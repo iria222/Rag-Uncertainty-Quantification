@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import torch
 
-APPLY_SELF_EVALUATION = True
+APPLY_SELF_EVALUATION = False
 DEBUG_MODE = True
 LOAD_ON_DEMAND = True
 

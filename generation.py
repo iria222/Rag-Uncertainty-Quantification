@@ -219,6 +219,7 @@ def postprocess_answer(raw_answer:str) -> str:
         r"no hay informaci[oó]n disponible en el contexto",
         r"no se encuentra en el contexto",
         r"el contexto no aporta",
+        r"no dispongo de suficiente informaci[oó]n"
     ]
     
     for pattern in abstention_patterns:
