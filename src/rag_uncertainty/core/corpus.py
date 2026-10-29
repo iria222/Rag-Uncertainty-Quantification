@@ -5,13 +5,12 @@ size-based chunking strategies.
 """
 import faiss
 
-from cache import calculate_cache_key, load_rag_cache
-from config import CHUNK_SIZE, CHUNK_OVERLAP, WORKERS
-from config import DATA_DIR
+from src.rag_uncertainty.utils.cache import calculate_cache_key, load_rag_cache
+from src.rag_uncertainty.config import CHUNK_SIZE, CHUNK_OVERLAP, WORKERS, DATA_DIR
 from pathlib import Path
 from pypdf import PdfReader
 from joblib import Parallel, delayed
-from utils import debug_print
+from src.rag_uncertainty.utils.utils import debug_print
 
 def discover_pdf_paths() -> list[Path]:
     """Find all PDF files available in the configured data directory.

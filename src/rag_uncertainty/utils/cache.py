@@ -3,7 +3,7 @@ This module provides functions for managing the RAG cache,
 including calculating a cache key, loading cached data, and saving new cache data.
 """
 
-from config import CACHE_VERSION, CHUNK_SIZE, CHUNK_OVERLAP, CACHE_DIR, EMB_MODEL_NAME, MANIFEST_DIR, CHUNK_DIR, INDEX_DIR
+from src.rag_uncertainty.config import CACHE_VERSION, CHUNK_SIZE, CHUNK_OVERLAP, CACHE_DIR, EMB_MODEL_NAME, MANIFEST_DIR, CHUNK_DIR, INDEX_DIR
 from pathlib import Path
 import faiss
 import json

@@ -4,13 +4,13 @@ import json
 import argparse
 import os
 
-from corpus import prepare_corpus
+from .core.corpus import prepare_corpus
 
-from retrieval import get_faiss_index, rerank_chunks, retrieve_relevant_chunks, free_retrieval_models
-from generation import generate_answer, free_generation_model
-from utils import debug_print
-from checkpoint import load_checkpoint, get_processed_ids, save_checkpoint
-from config import CHECKPOINT_SAVE_FREQUENCY
+from .core.retrieval import get_faiss_index, rerank_chunks, retrieve_relevant_chunks, free_retrieval_models
+from .core.generation import generate_answer, free_generation_model
+from .utils.utils import debug_print
+from .utils.checkpoint import load_checkpoint, get_processed_ids, save_checkpoint
+from .config import CHECKPOINT_SAVE_FREQUENCY, OUTPUT_DIR
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="RAG Pipeline")
@@ -23,7 +23,7 @@ def parse_arguments():
     parser.add_argument(
         "--output",
         type=str,
-        default="output/results.json",
+        default=str(OUTPUT_DIR / "results.json"),
         help="Path to the output JSON file to save the results.",
     )
     return parser.parse_args()
@@ -108,7 +108,7 @@ def batch_pipeline(args, chunks, vector_index):
     if not user_output_filename:
         user_output_filename = "results.json"
         
-    output_path = os.path.join("output", input_stem, user_output_filename)
+    output_path = os.path.join(OUTPUT_DIR, input_stem, user_output_filename)
     output_dir = os.path.dirname(os.path.abspath(output_path))
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)

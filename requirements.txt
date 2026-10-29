@@ -1,0 +1,9 @@
+  - python=3.12
+  - sentence-transformers=5.6.0
+  - pypdf=6.19.0
+  - faiss=1.15.0
+  - fonttools=4.66.1
+  - pillow=12.3.0
+  - torchvision=0.29.0
+  - accelerate=1.15.0
+  - bitsandbytes[version='>=0.46.1']

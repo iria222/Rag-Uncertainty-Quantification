@@ -2,7 +2,7 @@ import gc
 
 import torch
 
-from config import DEBUG_MODE, DEVICE
+from src.rag_uncertainty.config import DEBUG_MODE, DEVICE
 
 
 def free_model(model):

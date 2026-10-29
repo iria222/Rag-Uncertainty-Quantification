@@ -1,8 +1,8 @@
-from citations import format_context_label
-from config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVALUATION
+from src.rag_uncertainty.core.citations import format_context_label
+from src.rag_uncertainty.config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVALUATION
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
-from utils import free_model, debug_print
-from self_evaluation import evaluate_answer_by_prompt
+from src.rag_uncertainty.utils.utils import free_model, debug_print
+from src.rag_uncertainty.evaluation.self_evaluation import evaluate_answer_by_prompt
 import torch
 import time
 import re
@@ -75,8 +75,14 @@ def load_generation_model(quantization: str = QUANTIZATION):
         model_kwargs["device_map"] = {"": 0}
         if quant_config is not None:
             model_kwargs["quantization_config"] = quant_config
-        else:
+        elif quantization is None:
             model_kwargs["torch_dtype"] = torch.float16
+        else:
+            raise ValueError(
+                f"Quantization value not valid: {quantization}."
+                "The allowed values are '4bit', '8bit', and None."
+            )
+            
     else:
         
         debug_print("No GPU detected. Falling back to CPU (Full precision). THIS IS NOT RECOMMENDED")
