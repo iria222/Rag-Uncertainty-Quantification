@@ -46,11 +46,11 @@ def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retriev
     
     free_retrieval_models()
     
-    generated_response, load_time, generation_time, prob_true = generate_answer(query, reranked_chunks)
+    generated_results = generate_answer(query, reranked_chunks)
     
-    reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, prob_true)
+    reliability_signals = build_reliability_signals(generated_results)
     
-    return reranked_chunks, generated_response, reliability_signals
+    return reranked_chunks, generated_results["answer"], reliability_signals
     
 
 def main():
@@ -164,9 +164,9 @@ def run_generation_phase(args, results_export, queries_pending, retrieval_cache)
         question = query.get("question")
         
         debug_print(f"[{idx}/{total_prepared}] Generating answer for query with ID: {query_id}")
-        generated_response, load_time, generation_time, prob_true = generate_answer(question, reranked_chunks)
+        generated_results = generate_answer(question, reranked_chunks)
         
-        reliability_signals = build_reliability_signals(generated_response, load_time, generation_time, prob_true)
+        reliability_signals = build_reliability_signals(generated_results)
         
         results_export.append({
             "id": query_id,
@@ -175,7 +175,8 @@ def run_generation_phase(args, results_export, queries_pending, retrieval_cache)
             "ground_truth": query.get("ground_truth"),
             "answerable": query.get("answerable"),
             "retrieved_chunks": reranked_chunks,
-            "generated_response": generated_response,
+            "generated_response": generated_results["answer"],
+            "raw_response": generated_results["raw_answer"],
             "reliability_signals": reliability_signals
         })
         
@@ -243,14 +244,19 @@ def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pend
     free_retrieval_models()
     return retrieval_cache
 
-def build_reliability_signals(generated_response, load_time, generation_time, prob_true):
+def build_reliability_signals(generated_results: dict) -> dict:
+    p = generated_results["p_true"]
     # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
     reliability_signals = {
             "entropy": None,
-            "confidence_score": round(prob_true, 4) if prob_true is not None else None,
-            "decision": "abstain" if "[ABSTENCION]" in generated_response else "answer" ,      # 'answer', 'abstain', or 'escalate'
-            "model_load_time_sec": round(load_time, 2),
-            "generation_time_sec": round(generation_time, 2)
+            "confidence_score": round(p, 4) if p is not None else None,
+            "mass_ab": round(generated_results["mass_ab"], 4) if generated_results["mass_ab"] is not None else None,
+            "model_abstained": generated_results["model_abstained"],
+            "self_eval_abstained": generated_results["self_eval_abstained"],
+            "decision": "abstain" if "[ABSTENCION]" in generated_results["answer"] else "answer" ,      # 'answer', 'abstain', or 'escalate'
+            "model_load_time_sec": round(generated_results["load_time"], 2),
+            "generation_time_sec": round(generated_results["generation_time"], 2),
+            "self_eval_time_sec": round(generated_results["eval_time"], 2)
         }
     return reliability_signals
 

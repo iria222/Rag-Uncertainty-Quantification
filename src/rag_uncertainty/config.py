@@ -6,7 +6,9 @@ from pathlib import Path
 import os
 import torch
 
-APPLY_SELF_EVALUATION = False
+APPLY_SELF_EVALUATION = True
+SELF_EVAL_THRESHOLD = None
+
 DEBUG_MODE = True
 LOAD_ON_DEMAND = True # It is highly recommended to keep this option as True if your vram is limited (8gb or less)
 
@@ -44,7 +46,7 @@ WORKERS = min(MAX_WORKERS, os.cpu_count() or 1)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / 'data'
 OUTPUT_DIR = PROJECT_ROOT / 'output'
-
+SELF_EVAL_FEWSHOT_PATH = DATA_DIR / 'self_eval' / 'selfeval_fewshot.json'
 CACHE_DIR = DATA_DIR / 'cache'
 MANIFEST_DIR = CACHE_DIR / 'manifests.json'
 CHUNK_DIR = CACHE_DIR / 'chunks.json'
