@@ -1,7 +1,7 @@
 from src.rag_uncertainty.core.citations import format_context_label
 from src.rag_uncertainty.config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVALUATION, SELF_EVAL_THRESHOLD
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
-from src.rag_uncertainty.utils.utils import free_model, debug_print
+from src.rag_uncertainty.utils.utils import free_model, debug_print, validate_quantization
 from src.rag_uncertainty.evaluation.self_evaluation import compute_p_true
 import torch
 import time
@@ -69,44 +69,37 @@ def load_generation_model(quantization: str = QUANTIZATION):
         quantization (str): Quantization mode ("4bit", "8bit", or None for full
             precision).
     """
+    validate_quantization(quantization)
+         
     has_cuda = torch.cuda.is_available()
     debug_print(f"CUDA available: {has_cuda}")
 
-    quant_config = None
     model_kwargs = {}
 
     if has_cuda:
         debug_print(f"Loading model on GPU with quantization: {quantization}")
+        model_kwargs["device_map"] = {"":0}
+        model_kwargs["torch_dtype"] = torch.float16
         if quantization == "4bit":
-            quant_config = BitsAndBytesConfig(
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=torch.float16,
                 bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant= True,
             )
         elif quantization == "8bit":
-            quant_config = BitsAndBytesConfig(load_in_8bit=True)
-
-        model_kwargs["device_map"] = {"": 0}
-        if quant_config is not None:
-            model_kwargs["quantization_config"] = quant_config
-        elif quantization is None:
-            model_kwargs["torch_dtype"] = torch.float16
-        else:
-            raise ValueError(
-                f"Quantization value not valid: {quantization}."
-                "The allowed values are '4bit', '8bit', and None."
-            )
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
             
     else:
+        if quantization is not None:
+            debug_print(f"WARNING: quantization='{quantization}' requires a GPU and will be ignored.")
         
         debug_print("No GPU detected. Falling back to CPU (Full precision). THIS IS NOT RECOMMENDED")
         model_kwargs["device_map"] = "cpu"
         model_kwargs["torch_dtype"] = torch.float32 
 
     processor = AutoProcessor.from_pretrained(GEN_MODEL_NAME)
-    model = AutoModelForMultimodalLM.from_pretrained(
-        GEN_MODEL_NAME, **model_kwargs
-    )
+    model = AutoModelForMultimodalLM.from_pretrained(GEN_MODEL_NAME, **model_kwargs)
 
     return model, processor
 

@@ -2,7 +2,7 @@ import gc
 
 import torch
 
-from src.rag_uncertainty.config import DEBUG_MODE, DEVICE
+from src.rag_uncertainty.config import DEBUG_MODE, DEVICE, ALLOWED_QUANTIZATIONS
 
 
 def free_model(model):
@@ -35,6 +35,13 @@ def debug_print(message:str):
     if DEBUG_MODE:
         print(f"[DEBUG] {message}")
         
-import re
+def validate_quantization(quantization: str | None) -> str |None:
+    if quantization not in ALLOWED_QUANTIZATIONS:
+        allowed = ", ".join(sorted(map(repr, ALLOWED_QUANTIZATIONS)))
+        raise ValueError(
+            f"Quantization value not valid: {quantization}."
+            f"The allowed values are: {allowed}"
+        )
+    return quantization
 
 
