@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 
+from typing import Callable
+
 def load_checkpoint(output_path: str) -> list:
     """Load previous results if output file already exists
 
@@ -13,17 +15,27 @@ def load_checkpoint(output_path: str) -> list:
     Returns:
         list: list with the already processed results
     """
-    if os.path.exists(output_path):
-        try:
-            with open(output_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
-        except Exception as e:
-            print(f"Checkpoint file can't be read: {e}")
+    if not os.path.exists(output_path):
+        return []
+    
+    try:
+        with open(output_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+            reason = "content is not a JSON list"
+    except Exception as e:
+        reason = str(e)
+            
+    backup = output_path + ".corrupt"
+    try:
+        os.replace(output_path, backup)
+        print(f"Checkpoint can't be used ({reason}). Moved to {backup} ")
+    except OSError as e:
+        print(f"Checkpoint can't be used ({reason}) and couldn't be moved: {e}")
     return[]
 
-def get_processed_ids(results: list) -> set:
+def get_processed_ids(results: list, is_valid: Callable[[dict], bool] |None = None) -> set:
     """Get a set of the IDs of the already processed queries
 
     Args:
@@ -33,7 +45,7 @@ def get_processed_ids(results: list) -> set:
         set: IDs already completed
     """
     
-    return {item["id"] for item in results if "id" in item}
+    return {item["id"] for item in results if "id" in item and (is_valid is None or is_valid(item))}
 
 def save_checkpoint(ouptut_path: str, results: list):
     """Save results
@@ -43,14 +55,14 @@ def save_checkpoint(ouptut_path: str, results: list):
         results (list): updated results lists to save
     """
     output_dir = os.path.dirname(os.path.abspath(ouptut_path))
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
         
     temp_name = None
     try:
-        with tempfile.NamedTemporaryFile("w", dir=output_dir, delete=False, encoding="utf-8") as tf:
-            json.dump(results, tf, ensure_ascii=False, indent=4)
+        with tempfile.NamedTemporaryFile("w", dir=output_dir, delete=False, encoding="utf-8", suffix=".tmp") as tf:
             temp_name = tf.name
+            json.dump(results, tf, ensure_ascii=False, indent=4)
+        os.chmod(temp_name, 0o644)
         os.replace(temp_name, ouptut_path)
     except Exception as e:
         print(f"Error when saving checkpoint: {e}")
