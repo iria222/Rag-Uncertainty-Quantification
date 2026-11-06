@@ -32,12 +32,22 @@ EMB_MODEL_NAME = 'google/embeddinggemma-300m'
 RERANK_MODEL_NAME = 'BAAI/bge-reranker-v2-m3'
 GEN_MODEL_NAME = 'google/gemma-4-E2B-it'
 
+ALLOWED_QUANTIZATIONS = {"4bit", "8bit", None}
+# Quantization for generation model
 # Available options: 4bit and 8bit
 # Set QUANTIZATION = None if you don't want to use a quantized version of the model 
 QUANTIZATION = "8bit"
 
 MAX_WORKERS = 4
 WORKERS = min(MAX_WORKERS, os.cpu_count() or 1)
+
+#################################
+# MODEL CONFIGURATION - LLM-AS-JUDGE
+#################################
+
+JUDGE_MODEL_NAME = "Qwen/Qwen3-8B"
+JUDGE_QUANTIZATION = "4bit"
+JUDGE_MAX_TOKENS = 512
 
 #################################
 # DIRECTORY CONFIGURATION
