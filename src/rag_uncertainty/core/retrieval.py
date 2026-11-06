@@ -3,9 +3,9 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
-from src.rag_uncertainty.utils.cache import save_rag_cache
-from src.rag_uncertainty.config import DEVICE, EMB_MODEL_NAME, RERANK_MODEL_NAME, LOAD_ON_DEMAND
-from src.rag_uncertainty.utils.utils import free_model, debug_print
+from rag_uncertainty.utils.cache import save_rag_cache
+from rag_uncertainty.config import DEVICE, EMB_MODEL_NAME, RERANK_MODEL_NAME, LOAD_ON_DEMAND
+from rag_uncertainty.utils.utils import free_model, debug_print
 
 _global_embedding_model = None
 _global_reranking_model = None

@@ -4,7 +4,7 @@ import torch
 import json
 import re
 from pathlib import Path
-from src.rag_uncertainty.config import SELF_EVAL_FEWSHOT_PATH
+from rag_uncertainty.config import SELF_EVAL_FEWSHOT_PATH
 
 ANSWER_PREFIX = "La respuesta propuesta es: ("
 

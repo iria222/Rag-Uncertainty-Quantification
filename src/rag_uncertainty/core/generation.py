@@ -1,8 +1,8 @@
-from src.rag_uncertainty.core.citations import format_context_label
-from src.rag_uncertainty.config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVALUATION, SELF_EVAL_THRESHOLD
+from rag_uncertainty.core.citations import format_context_label
+from rag_uncertainty.config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVALUATION, SELF_EVAL_THRESHOLD
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
-from src.rag_uncertainty.utils.utils import free_model, debug_print, validate_quantization
-from src.rag_uncertainty.evaluation.self_evaluation import compute_p_true
+from rag_uncertainty.utils.utils import free_model, debug_print, validate_quantization
+from rag_uncertainty.evaluation.self_evaluation import compute_p_true
 import torch
 import time
 import re
@@ -20,17 +20,15 @@ SYSTEM_PROMPT = (
     "La única excepción a esta regla será cuando te abstengas de responder: en ese caso no incluyas la sección 'Referencias'.\n"
     "5. Si la respuesta no se encuentra o no se puede deducir con certeza del contexto, debes abstenerte respondiendo exactamente con el siguiente texto, "
     "sin añadir ninguna sección de 'Referencias:' ni texto adicional: "
-    "'[ABSTENCION] No dispongo de suficiente información en el corpus para responder.'"
+    "'[ABSTENCION] No dispongo de suficiente información en el corpus para responder.'\n"
+    "6. No repitas la pregunta ni el contexto, ni uses encabezados como 'PREGUNTA:' o 'RESPUESTA:'. Empieza directamente con la respuesta.\n"
 )
 
 USER_PROMPT_TEMPLATE = """CONTEXTO:
 {context}
 
 PREGUNTA:
-{query}
-
-RESPUESTA:
-"""
+{query}"""
 
 _global_model = None
 _global_processor = None
@@ -131,6 +129,14 @@ def is_abstention(text:str) -> bool:
         return True
     head = text[:_ABSTENTION_HEAD_CHARS].lower()
     return any(re.search(p,head) for p in _ABSTENTION_PATTERNS)
+
+def has_answer_body(text:str) -> bool:
+    # Drop references section
+    body = re.split(r"Referencias\s*:", text, maxsplit = 1)[0]
+    body = re.sub(r"^\s*\[\d+\]\s*Archivo:.*$", "", body, flags=re.M)
+    # Drop inline citation markers
+    body = re.sub(r"\[\d+\]", "", body)
+    return bool(re.search(r"[^\W\d_]{2,}", body))
     
 def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
     """Generates an answer for a specific question
@@ -161,6 +167,7 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
         "p_true": None,
         "mass_ab": None,
         "model_abstained": False,
+        "empty_answer": False,
         "self_eval_abstained": False
     }
     
@@ -206,9 +213,13 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
     raw_answer = processor.decode(generated_tokens, skip_special_tokens=True).strip()
     result["raw_answer"] = raw_answer
     
-    model_abstained = is_abstention(raw_answer)
-    result["model_abstained"] = model_abstained
+    explicit_abstention = is_abstention(raw_answer)
     
+    empty_answer = (not explicit_abstention) and (not has_answer_body(raw_answer))
+    
+    model_abstained = explicit_abstention or empty_answer
+    result["model_abstained"] = model_abstained
+    result["empty_answer"] = empty_answer
     if model_abstained:
         result["answer"] = _ABSTENTION_MESSAGE
         return result
