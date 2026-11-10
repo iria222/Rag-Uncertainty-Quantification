@@ -246,9 +246,8 @@ def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pend
 
 def build_reliability_signals(generated_results: dict) -> dict:
     p = generated_results["p_true"]
-    # TODO: Implement the calculation of reliability signals based on the reranked chunks and the generated response.
     reliability_signals = {
-            "entropy": None,
+            "uncertainty_metrics": generated_results["uncertainty_metrics"],
             "confidence_score": round(p, 4) if p is not None else None,
             "mass_ab": round(generated_results["mass_ab"], 4) if generated_results["mass_ab"] is not None else None,
             "model_abstained": generated_results["model_abstained"],

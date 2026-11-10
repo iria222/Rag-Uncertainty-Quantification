@@ -3,6 +3,7 @@ from rag_uncertainty.config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVAL
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
 from rag_uncertainty.utils.utils import free_model, debug_print, validate_quantization
 from rag_uncertainty.evaluation.self_evaluation import compute_p_true
+from rag_uncertainty.evaluation.uncertainty.metrics import compute_mean_token_entropy
 import torch
 import time
 import re
@@ -77,7 +78,7 @@ def load_generation_model(quantization: str = QUANTIZATION):
     if has_cuda:
         debug_print(f"Loading model on GPU with quantization: {quantization}")
         model_kwargs["device_map"] = {"":0}
-        model_kwargs["torch_dtype"] = torch.float16
+        model_kwargs["dtype"] = torch.float16
         if quantization == "4bit":
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -94,7 +95,7 @@ def load_generation_model(quantization: str = QUANTIZATION):
         
         debug_print("No GPU detected. Falling back to CPU (Full precision). THIS IS NOT RECOMMENDED")
         model_kwargs["device_map"] = "cpu"
-        model_kwargs["torch_dtype"] = torch.float32 
+        model_kwargs["dtype"] = torch.float32 
 
     processor = AutoProcessor.from_pretrained(GEN_MODEL_NAME)
     model = AutoModelForMultimodalLM.from_pretrained(GEN_MODEL_NAME, **model_kwargs)
@@ -131,11 +132,24 @@ def is_abstention(text:str) -> bool:
     return any(re.search(p,head) for p in _ABSTENTION_PATTERNS)
 
 def has_answer_body(text:str) -> bool:
-    # Drop references section
-    body = re.split(r"Referencias\s*:", text, maxsplit = 1)[0]
-    body = re.sub(r"^\s*\[\d+\]\s*Archivo:.*$", "", body, flags=re.M)
-    # Drop inline citation markers
+    # Remove references section
+    body = re.split(
+        r"\bReferencias\s*:",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE
+    )[0]
+
+    # Remove reference entries
+    body = re.sub(
+        r"(?m)^\s*\[\d+\]\s*Archivo:.*$",
+        "",
+        body
+    )
+
+    # Remove inline citation markers
     body = re.sub(r"\[\d+\]", "", body)
+
     return bool(re.search(r"[^\W\d_]{2,}", body))
     
 def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
@@ -156,6 +170,7 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
             - mass_ab: mass assigned to abstention (if self-evaluation is applied)
             - model_abstained: whether the model abstained or not
             - self_eval_abstained: whether the self-evaluation abstained or not
+            - uncertainty_metrics: dictionary with uncertainty metrics (if computed)
     """
     
     result = {
@@ -168,7 +183,8 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
         "mass_ab": None,
         "model_abstained": False,
         "empty_answer": False,
-        "self_eval_abstained": False
+        "self_eval_abstained": False,
+        "uncertainty_metrics": None
     }
     
     if not reranked_chunks:
@@ -200,16 +216,22 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
         outputs = model.generate(
             **inputs,
             max_new_tokens = 512,
-            do_sample = False
+            do_sample = False,
+            return_dict_in_generate = True,
+            output_scores = True,
+            output_logits = True
         )
         
+    uncertainty_metrics = compute_uncertainty_metrics(outputs)
+    result["uncertainty_metrics"] = uncertainty_metrics
+    
     end_time = time.perf_counter()
     generation_time = end_time - start_time
     result["generation_time"] = generation_time
     debug_print(f"Generation completed in {generation_time:.2f} seconds.")
-        
+    
     input_len = inputs["input_ids"].shape[1]
-    generated_tokens = outputs[0][input_len:]
+    generated_tokens = outputs.sequences[0][input_len:]
     raw_answer = processor.decode(generated_tokens, skip_special_tokens=True).strip()
     result["raw_answer"] = raw_answer
     
@@ -220,6 +242,15 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
     model_abstained = explicit_abstention or empty_answer
     result["model_abstained"] = model_abstained
     result["empty_answer"] = empty_answer
+    
+    debug_print("=" * 50)
+    debug_print("GENERATION DIAGNOSTICS")
+    debug_print(f"Retrieved chunks: {len(reranked_chunks)}")
+    debug_print(f"Raw answer: {raw_answer!r}")
+    debug_print(f"Explicit abstention: {explicit_abstention}")
+    debug_print(f"Has answer body: {has_answer_body(raw_answer)}")
+    debug_print(f"Empty answer: {empty_answer}")
+    debug_print("=" * 50)
     if model_abstained:
         result["answer"] = _ABSTENTION_MESSAGE
         return result
@@ -239,6 +270,8 @@ def generate_answer(query: str, reranked_chunks: list[dict]) -> dict:
         if SELF_EVAL_THRESHOLD is not None and ev["p_true"] < SELF_EVAL_THRESHOLD:
             result["answer"] = _ABSTENTION_MESSAGE
             result["self_eval_abstained"] = True
+            
+    
         
             
     return result
@@ -268,3 +301,12 @@ def get_model_and_processor():
         
     return load_time,_global_model,_global_processor
 
+
+def compute_uncertainty_metrics(outputs):
+    mean_token_entropy = compute_mean_token_entropy(outputs.logits)
+    
+    metrics = {
+        "mean_token_entropy": mean_token_entropy,
+    }
+    
+    return metrics
