@@ -54,10 +54,11 @@ JUDGE_MAX_TOKENS = 512
 #################################
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = PROJECT_ROOT / 'data'
+DATA_ROOT = PROJECT_ROOT / 'data'
+DATA_DIR = DATA_ROOT / 'corpus'
 OUTPUT_DIR = PROJECT_ROOT / 'output'
-SELF_EVAL_FEWSHOT_PATH = DATA_DIR / 'self_eval' / 'selfeval_fewshot.json'
-CACHE_DIR = DATA_DIR / 'cache'
+SELF_EVAL_FEWSHOT_PATH = DATA_ROOT / 'self_eval' / 'selfeval_fewshot.json'
+CACHE_DIR = DATA_ROOT / 'cache'
 MANIFEST_DIR = CACHE_DIR / 'manifests.json'
 CHUNK_DIR = CACHE_DIR / 'chunks.json'
 INDEX_DIR = CACHE_DIR / 'index.faiss'
