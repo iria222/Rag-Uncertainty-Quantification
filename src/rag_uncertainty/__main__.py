@@ -47,10 +47,8 @@ def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retriev
     free_retrieval_models()
     
     generated_results = generate_answer(query, reranked_chunks)
-    
-    reliability_signals = build_reliability_signals(generated_results)
-    
-    return reranked_chunks, generated_results["answer"], reliability_signals
+        
+    return reranked_chunks, generated_results["answer"], generated_results["references"]
     
 
 def main():
@@ -175,8 +173,10 @@ def run_generation_phase(args, results_export, queries_pending, retrieval_cache)
             "ground_truth": query.get("ground_truth"),
             "answerable": query.get("answerable"),
             "retrieved_chunks": reranked_chunks,
-            "generated_response": generated_results["answer"],
+            "empty_answer": generated_results["empty_answer"],
             "raw_response": generated_results["raw_answer"],
+            "generated_response": generated_results["answer"],
+            "references": generated_results["references"],
             "reliability_signals": reliability_signals
         })
         
@@ -208,7 +208,7 @@ def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pend
     
     changes_saved = False
     if total_to_retrieved > 0:
-        debug_print(f"--- Executing retrieval and reranking for {total_pending} queries ---")
+        debug_print(f"--- Executing retrieval and reranking for {total_to_retrieved} queries ---")
             
         for idx, query in enumerate(queries_needing_retrieval,1):
             query_id = query.get("id", "unknown_id")
@@ -280,12 +280,14 @@ def interactive_pipeline(chunks, vector_index):
             print("Por favor, introduce una pregunta válida.")
             continue
             
-        retrieved_chunks, generated_response, _ = run_rag_pipeline(user_input, vector_index, chunks)
+        retrieved_chunks, generated_response, references = run_rag_pipeline(user_input, vector_index, chunks)
         free_generation_model()
             
         print(f"\n{'='*60}")
         print("RESULTADO DE LA CONSULTA:")
         print(f"Respuesta generada: {generated_response}")
+        if references:
+            print(references)
         print("\nFragmentos más relevantes recuperados:")
         for i, chunk in enumerate(retrieved_chunks, 1):
             score = chunk.get('rerank_score', 'N/A')

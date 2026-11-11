@@ -168,7 +168,7 @@ def detect_abstention(record:dict) -> bool:
     signals = record.get("reliability_signals") or {}
     if record.get("abstained") is not None:
         return bool(record["abstained"])
-    if signals.get("decision") == "abstained" or signals.get("model_abstained") or signals.get("self_eval_abstained"):
+    if signals.get("decision") == "abstain" or signals.get("model_abstained") or signals.get("self_eval_abstained"):
         return True
     answer = get_answer(record).strip()
     return not answer or "[ABSTENCION]" in answer
