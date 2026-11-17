@@ -4,7 +4,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 from rag_uncertainty.utils.cache import save_rag_cache
-from rag_uncertainty.config import DEVICE, EMB_MODEL_NAME, RERANK_MODEL_NAME, LOAD_ON_DEMAND
+from rag_uncertainty.config import DEVICE, EMB_MODEL_NAME, RERANK_MODEL_NAME
 from rag_uncertainty.utils.utils import free_model, debug_print
 
 _global_embedding_model = None
@@ -82,6 +82,35 @@ def get_faiss_index(cache_key : str, chunks : list[dict], cached_vector_index : 
     
     return vector_index
 
+def retrieve_and_rerank(query:str, 
+                        vector_index: faiss.Index, 
+                        chunks:list[dict], 
+                        top_k_retrieved: int = 100, 
+                        top_k_reranked: int = 5) -> tuple[list[dict], dict[str, list[float]]]:
+    
+    """Retrieve and rerank the most relevant chunks for a given query using the FAISS index and a cross-encoder model.
+    
+    Args:
+        query (str): The input query for which to retrieve and rerank relevant chunks.
+        vector_index (faiss.Index): The FAISS index containing chunk embeddings.
+        chunks (list[dict]): The list of chunks corresponding to the FAISS index.
+        top_k_retrieved (int, optional): The number of top relevant chunks to retrieve. Defaults to 100.
+        top_k_reranked (int, optional): The number of top reranked chunks to return. Defaults to 5.
+        
+    Returns:
+        tuple[list[dict], dict[str, list[float]]]: A tuple containing the list of top reranked chunks and a dictionary with the scores of all reranked chunks.
+    """
+    relevant_chunks = retrieve_relevant_chunks(query, vector_index, chunks, top_k=top_k_retrieved)
+    all_reranked = rerank_chunks(query, relevant_chunks)
+    
+    score_lists ={
+        "retrieval": [c["score"] for c in relevant_chunks],
+        "rerank": [c["rerank_score"] for c in all_reranked],
+    }
+    
+    return all_reranked[:top_k_reranked], score_lists
+    
+
 def retrieve_relevant_chunks(query: str, vector_index: faiss.Index, chunks: list[dict], top_k: int = 100) -> list[dict]:
     """Retrieve the most relevant chunks for a given query using the FAISS index.
 
@@ -118,16 +147,15 @@ def retrieve_relevant_chunks(query: str, vector_index: faiss.Index, chunks: list
     return relevant_chunks
 
 
-def rerank_chunks(query: str, relevant_chunks: list[dict], top_k: int = 5) -> list[dict]:
+def rerank_chunks(query: str, relevant_chunks: list[dict]) -> list[dict]:
     """Rerank the retrieved chunks based on their relevance to the query using a cross-encoder model.
     
     Args:
         query (str): The input query for which to rerank the relevant chunks.
         relevant_chunks (list[dict]): The list of relevant chunks to be reranked.
-        top_k (int, optional): The number of top reranked chunks to return. Defaults to 5.
     
     Returns:
-        list[dict]: A list of the top reranked chunks with their rerank scores.
+        list[dict]: A list of the reranked chunks with their rerank scores.
     """
     if not query.strip():
         debug_print("Empty query provided. Returning an empty list of reranked chunks.")
@@ -144,7 +172,6 @@ def rerank_chunks(query: str, relevant_chunks: list[dict], top_k: int = 5) -> li
         for chunk, score in zip(relevant_chunks, rerank_scores, strict = True)
     ]
     scored.sort(key=lambda x: x["rerank_score"], reverse=True)
-    top_reranked = scored[:top_k]
 
     
-    return top_reranked
+    return scored
