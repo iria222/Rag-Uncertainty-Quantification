@@ -3,7 +3,7 @@ from rag_uncertainty.config import GEN_MODEL_NAME, QUANTIZATION, APPLY_SELF_EVAL
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
 from rag_uncertainty.utils.utils import free_model, debug_print, validate_quantization
 from rag_uncertainty.evaluation.self_evaluation import compute_p_true
-from rag_uncertainty.evaluation.uncertainty.metrics import compute_mean_token_entropy
+from rag_uncertainty.evaluation.uncertainty_metrics import compute_uncertainty_metrics
 import torch
 import time
 import re
@@ -337,11 +337,3 @@ def get_model_and_processor():
     return load_time,_global_model,_global_processor
 
 
-def compute_uncertainty_metrics(outputs):
-    mean_token_entropy = compute_mean_token_entropy(outputs.logits)
-    
-    metrics = {
-        "mean_token_entropy": mean_token_entropy,
-    }
-    
-    return metrics

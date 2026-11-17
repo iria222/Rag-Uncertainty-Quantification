@@ -4,13 +4,13 @@ import json
 import argparse
 import os
 
-from .core.corpus import prepare_corpus
-
-from .core.retrieval import get_faiss_index, rerank_chunks, retrieve_relevant_chunks, free_retrieval_models
-from .core.generation import generate_answer, free_generation_model
-from .utils.utils import debug_print
-from .utils.checkpoint import load_checkpoint, get_processed_ids, save_checkpoint
-from .config import CHECKPOINT_SAVE_FREQUENCY, OUTPUT_DIR
+from rag_uncertainty.core.corpus import prepare_corpus
+from rag_uncertainty.evaluation.retrieval_metrics import compute_retrieval_metrics
+from rag_uncertainty.core.retrieval import get_faiss_index, free_retrieval_models, retrieve_and_rerank
+from rag_uncertainty.core.generation import generate_answer, free_generation_model
+from rag_uncertainty.utils.utils import debug_print
+from rag_uncertainty.utils.checkpoint import load_checkpoint, get_processed_ids, save_checkpoint
+from rag_uncertainty.config import CHECKPOINT_SAVE_FREQUENCY, OUTPUT_DIR, TOP_K_RERANKED, TOP_K_RETRIEVED, SHOW_METRICS
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="RAG Pipeline")
@@ -28,7 +28,10 @@ def parse_arguments():
     )
     return parser.parse_args()
 
-def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retrieved: int = 100, top_k_reranked: int = 5):
+def run_rag_pipeline(query: str, 
+                     vector_index, chunks: list[dict], 
+                     top_k_retrieved: int = TOP_K_RETRIEVED, 
+                     top_k_reranked: int = TOP_K_RERANKED) -> dict:
     """Runs the RAG pipeline for a given query, retrieving and reranking relevant chunks.
     
     Args:
@@ -39,16 +42,21 @@ def run_rag_pipeline(query: str, vector_index, chunks: list[dict], top_k_retriev
         top_k_reranked (int, optional): The number of top reranked chunks to return. Defaults to 5."""
         
     debug_print(f"Seaching relevant fragments for the query: '{query}'")
-    relevant_chunks = retrieve_relevant_chunks(query, vector_index, chunks, top_k=top_k_retrieved)
-    
-    debug_print(f"Applying reranking to the {len(relevant_chunks)} retrieved chunks.")
-    reranked_chunks = rerank_chunks(query, relevant_chunks, top_k=top_k_reranked)
+    reranked_chunks, score_lists = retrieve_and_rerank(query, vector_index, chunks, top_k_retrieved, top_k_reranked)
     
     free_retrieval_models()
     
+    retrieval_assessment = assess_retrieval(score_lists)
+    #TODO: if retrieval_assessment["decision"]["abstain"]: skip generation here
+    
     generated_results = generate_answer(query, reranked_chunks)
+    reliability_signals = build_reliability_signals(generated_results, retrieval_assessment)
         
-    return reranked_chunks, generated_results["answer"], generated_results["references"]
+    return {"reranked_chunks": reranked_chunks, 
+            "answer": generated_results["answer"], 
+            "references": generated_results["references"],
+            "reliability_signals": reliability_signals,
+            }
     
 
 def main():
@@ -157,6 +165,7 @@ def run_generation_phase(args, results_export, queries_pending, retrieval_cache)
     for idx, item in enumerate(prepared_batch, 1):
         query = item["query"]
         reranked_chunks = item["reranked_chunks"]
+        retrieval_assessment = item["retrieval_assessment"]
         
         query_id = query.get("id", "unknown_id")
         question = query.get("question")
@@ -164,7 +173,7 @@ def run_generation_phase(args, results_export, queries_pending, retrieval_cache)
         debug_print(f"[{idx}/{total_prepared}] Generating answer for query with ID: {query_id}")
         generated_results = generate_answer(question, reranked_chunks)
         
-        reliability_signals = build_reliability_signals(generated_results)
+        reliability_signals = build_reliability_signals(generated_results, retrieval_assessment)
         
         results_export.append({
             "id": query_id,
@@ -218,12 +227,12 @@ def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pend
                 continue
                 
             debug_print(f"--- [{idx}/{total_to_retrieved}] Processing retrieval for query with ID: {query_id} ---")
-            relevant_chunks = retrieve_relevant_chunks(question, vector_index, chunks)
-            reranked_chunks = rerank_chunks(question, relevant_chunks)
+            reranked_chunks, score_lists = retrieve_and_rerank(question, vector_index, chunks, TOP_K_RETRIEVED, TOP_K_RERANKED)
             
             retrieval_cache.append({
                 "query": query,
-                "reranked_chunks": reranked_chunks
+                "reranked_chunks": reranked_chunks,
+                "score_lists": score_lists,
             })
             
             changes_saved = False
@@ -241,14 +250,26 @@ def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pend
     else:
         debug_print("All pending queries already have their retrieval cached. Skipping retrieval phase...")
         
+    for item in retrieval_cache:
+        item["retrieval_assessment"] = assess_retrieval(item.get("score_lists"))
     free_retrieval_models()
     return retrieval_cache
 
-def build_reliability_signals(generated_results: dict) -> dict:
+def assess_retrieval(score_lists: dict | None) -> dict:
+    
+    metrics = compute_retrieval_metrics(score_lists) if score_lists else None
+    return{
+        "metrics": metrics,
+        #TODO: Decide to abstain or continue with generation based on retrieval metrics
+        
+    }
+
+def build_reliability_signals(generated_results: dict, retrieval_assessment: dict) -> dict:
     p = generated_results["p_true"]
     reliability_signals = {
+            "retrieval_metrics": retrieval_assessment["metrics"],
             "uncertainty_metrics": generated_results["uncertainty_metrics"],
-            "confidence_score": round(p, 4) if p is not None else None,
+            "p_true_score": round(p, 4) if p is not None else None,
             "mass_ab": round(generated_results["mass_ab"], 4) if generated_results["mass_ab"] is not None else None,
             "model_abstained": generated_results["model_abstained"],
             "self_eval_abstained": generated_results["self_eval_abstained"],
@@ -280,9 +301,14 @@ def interactive_pipeline(chunks, vector_index):
             print("Por favor, introduce una pregunta válida.")
             continue
             
-        retrieved_chunks, generated_response, references = run_rag_pipeline(user_input, vector_index, chunks)
+        result = run_rag_pipeline(user_input, vector_index, chunks)
         free_generation_model()
-            
+        
+        retrieved_chunks = result["reranked_chunks"]
+        signals = result["reliability_signals"]
+        generated_response = result["answer"]
+        references = result["references"]
+                    
         print(f"\n{'='*60}")
         print("RESULTADO DE LA CONSULTA:")
         print(f"Respuesta generada: {generated_response}")
@@ -295,6 +321,16 @@ def interactive_pipeline(chunks, vector_index):
             print(f"{i}. [Score: {score_str}] - Fichero: {chunk.get('source', 'Desconocido')} (Pág. {chunk.get('page','N/A')})")
             print(f"     Extracto: {chunk['text'][:180]}...")
         print(f"\n{'='*60}")
+        
+        if SHOW_METRICS:
+            print("\nMétricas de retrieval:")
+            for source, values in (signals["retrieval_metrics"] or {}).items():
+                formatted = ", ".join(f"{k}={v:.4f}" if v is not None else f"{k}=N/A"
+                                      for k,v in values.items())
+                print(f" [{source}] {formatted}")
+                
+        
+        
             
 
 

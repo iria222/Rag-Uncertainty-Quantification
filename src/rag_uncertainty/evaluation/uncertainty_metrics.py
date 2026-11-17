@@ -25,46 +25,43 @@ def compute_entropy(logits:tuple) -> torch.Tensor | None:
         
     return torch.stack(entropies)
 
-def compute_mean_token_entropy(entropy: torch.Tensor, number_of_tokens: int) -> float | None:
+def compute_mean_token_entropy(entropy: torch.Tensor) -> float | None:
     """Compute the mean entropy across all tokens.
     
     Args:
         entropy (torch.Tensor): A tensor containing the entropy values for each token.
-        number_of_tokens (int): The total number of tokens.
         
     Returns:
         float | None: The mean entropy value across all tokens, or None if the input is empty.
     """
-    if entropy is None or number_of_tokens == 0:
+    if entropy is None or get_number_of_tokens(entropy) == 0:
         return None
     return entropy.mean().item()
 
-def compute_max_token_entropy(entropy: torch.Tensor, number_of_tokens: int) -> float | None:
+def compute_max_token_entropy(entropy: torch.Tensor) -> float | None:
     """Compute the maximum entropy across all tokens.
     
     Args:
         entropy (torch.Tensor): A tensor containing the entropy values for each token.
-        number_of_tokens (int): The total number of tokens.
         
     Returns:
         float | None: The maximum entropy value across all tokens, or None if the input is empty.
     """
-    if entropy is None or number_of_tokens == 0:
+    if entropy is None or get_number_of_tokens(entropy) == 0:
         return None
     
     return entropy.max().item()
 
-def compute_p90_entropy(entropy: torch.Tensor, number_of_tokens: int) -> float | None:
+def compute_p90_entropy(entropy: torch.Tensor) -> float | None:
     """Compute the 90th percentile entropy across all tokens.
     
     Args:
         entropy (torch.Tensor): A tensor containing the entropy values for each token.
-        number_of_tokens (int): The total number of tokens.
         
     Returns:
         float | None: The 90th percentile entropy value across all tokens, or None if the input is empty.
     """
-    if entropy is None or number_of_tokens == 0:
+    if entropy is None or get_number_of_tokens(entropy) == 0:
         return None
     p90_entropy = torch.quantile(entropy, 0.9)
     
@@ -82,3 +79,26 @@ def get_number_of_tokens(entropy: torch.Tensor) -> int | None:
     if entropy is None:
         return 0
     return entropy.numel()
+
+
+UNCERTAINTY_METRICS = {
+    "mean_token_entropy": compute_mean_token_entropy,
+    "max_token_entropy": compute_max_token_entropy,
+    "p90_entropy": compute_p90_entropy,
+    "num_tokens": get_number_of_tokens
+}
+
+def compute_uncertainty_metrics(outputs, metrics : dict = UNCERTAINTY_METRICS):
+    """Compute uncertainty metrics based on the model outputs and specified metrics.
+    
+    Args:
+        outputs: The model outputs containing logits for each token.
+        metrics (dict, optional): A dictionary of metric functions to compute. Defaults to UNCERTAINTY_METRICS.
+        
+    Returns:
+        dict: A dictionary containing the computed uncertainty metrics.
+    """
+    entropy = compute_entropy(outputs.logits)
+    result = {name: fn(entropy) for name, fn in metrics.items()}
+    
+    return result

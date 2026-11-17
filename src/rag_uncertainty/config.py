@@ -9,12 +9,19 @@ import torch
 APPLY_SELF_EVALUATION = True
 SELF_EVAL_THRESHOLD = None
 
-DEBUG_MODE = True
+
 LOAD_ON_DEMAND = True # It is highly recommended to keep this option as True if your vram is limited (8gb or less)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CHECKPOINT_SAVE_FREQUENCY = 10
+
+#################################
+# DEBUGGING INFORMATION
+#################################
+
+DEBUG_MODE = True
+SHOW_METRICS = True
 
 #################################
 # CHUNKING CONFIGURATION
@@ -23,6 +30,13 @@ CHECKPOINT_SAVE_FREQUENCY = 10
 CACHE_VERSION = 1
 CHUNK_SIZE = 200
 CHUNK_OVERLAP = 20
+
+#################################
+# RETRIEVAL CONFIGURATION
+#################################
+
+TOP_K_RETRIEVED = 100
+TOP_K_RERANKED = 5
 
 #################################
 # MODEL CONFIGURATION
