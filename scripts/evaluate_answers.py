@@ -1,3 +1,9 @@
+""" Evaluate saved RAG answers using an LLM judge 
+
+Usage:
+python scripts/evaluate_answers.py --input results.json --examples self_eval_fewshot.json --output results_judged.json
+"""
+
 import argparse
 import json
 from pathlib import Path
@@ -12,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate saved RAG answers using an LLM judge")
     
     parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--examples", type=Path, required=True)
+    parser.add_argument("--examples", type=Path, required=True, help="Few-shot examples path") 
     parser.add_argument("--output", type=Path, required=True)
     
     parser.add_argument("--save-every", type=int, default=5, help="Save the checkpoint every N records")
