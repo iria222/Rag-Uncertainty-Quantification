@@ -1,4 +1,4 @@
-
+""" Uncertainty metrics for computing evaluation scores. """
 import torch
 
 def compute_entropy(logits:tuple) -> torch.Tensor | None:

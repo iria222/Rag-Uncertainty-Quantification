@@ -1,3 +1,5 @@
+""" Retrieval metrics for computing evaluation scores. """
+
 import numpy as np
 
 

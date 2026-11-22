@@ -96,6 +96,13 @@ def main():
         interactive_pipeline(chunks, vector_index)
 
 def batch_pipeline(args, chunks, vector_index):
+    """ Run the RAG pipeline in batch mode, processing queries from an input JSON file and saving results to an output JSON file.
+    
+    Args:
+        args: Command-line arguments containing input and output paths.
+        chunks (list[dict]): The list of chunks corresponding to the FAISS index.
+        vector_index (faiss.Index): The FAISS index containing chunk embeddings.
+    """
 
     debug_print(f"Loading queries from: {args.input_json}")
     try:
@@ -150,6 +157,14 @@ def batch_pipeline(args, chunks, vector_index):
     debug_print(f"Process ended successfully. All results saved in {output_path}.")
 
 def run_generation_phase(args, results_export, queries_pending, retrieval_cache):
+    """ Run the answer generation phase for the pending queries, using the retrieval cache to avoid redundant retrievals.
+    
+    Args:
+        args: Command-line arguments containing output paths.
+        results_export (list): The list of already processed results to which new results will be appended
+        queries_pending (list): The list of queries that still need to be processed
+        retrieval_cache (list): The cache of retrieved and reranked chunks for previously processed queries
+    """
     retrieved_map = {item["query"]["id"]: item for item in retrieval_cache if "query" in item and "id" in item["query"]}
     prepared_batch = [
         retrieved_map[q.get("id", "unknown_id")]
@@ -202,7 +217,18 @@ def run_generation_phase(args, results_export, queries_pending, retrieval_cache)
         debug_print("[CHECKPOINT] Final checkpoint saved in disk\n")
     free_generation_model()
 
-def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pending, total_pending):
+def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pending) -> list[dict]:
+    """ Run the retrieval and reranking phase for the pending queries, using a checkpoint to avoid redundant retrievals.
+    
+    Args:
+        chunks (list[dict]): The list of chunks corresponding to the FAISS index.
+        vector_index (faiss.Index): The FAISS index containing chunk embeddings.
+        retrieval_cache_path (str): The path to the retrieval cache file.
+        queries_pending (list): The list of queries that still need to be processed.
+    
+    Returns:
+        list[dict]: The updated retrieval cache containing retrieved and reranked chunks for all processed queries
+    """
     retrieval_cache = load_checkpoint(retrieval_cache_path)
     retrieved_ids = {item["query"]["id"] for item in retrieval_cache if "query" in item and "id" in item["query"]}
     if retrieved_ids:
@@ -256,6 +282,14 @@ def run_retrieval_phase(chunks, vector_index, retrieval_cache_path, queries_pend
     return retrieval_cache
 
 def assess_retrieval(score_lists: dict | None) -> dict:
+    """ Assess the retrieval quality based on the score lists, computing retrieval metrics.
+    
+    Args:
+        score_lists (dict | None): The score lists obtained from retrieval and reranking.
+    
+    Returns:
+        dict: A dictionary containing the computed retrieval metrics and any decisions based on them.
+    """
     
     metrics = compute_retrieval_metrics(score_lists) if score_lists else None
     return{
@@ -281,6 +315,12 @@ def build_reliability_signals(generated_results: dict, retrieval_assessment: dic
     return reliability_signals
 
 def interactive_pipeline(chunks, vector_index):
+    """ Run the RAG pipeline in interactive mode, prompting the user for queries and displaying results.
+    
+    Args:
+        chunks (list[dict]): The list of chunks corresponding to the FAISS index.
+        vector_index (faiss.Index): The FAISS index containing chunk embeddings.
+    """
     print(f"\n{'='*60}")
     print("\n--- MODO INTERACTIVO ---")
     print("Para salir de la aplicación escribe '/salir' o '/exit'")
@@ -328,11 +368,6 @@ def interactive_pipeline(chunks, vector_index):
                 formatted = ", ".join(f"{k}={v:.4f}" if v is not None else f"{k}=N/A"
                                       for k,v in values.items())
                 print(f" [{source}] {formatted}")
-                
-        
-        
-            
-
 
 if __name__ == "__main__":
     main()
